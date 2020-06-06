@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"cache/singleflight"
 	"fmt"
 	"log"
 	"sync"
@@ -10,6 +11,7 @@ type Group struct {
 	name      string
 	getter    GetterFunc
 	mainCache cache
+	loader *singleflight.Group
 }
 
 
@@ -29,6 +31,7 @@ func NewGroup(name string, maxBytes int64, getter GetterFunc) *Group {
 	g := &Group{
 		name:   name,
 		getter: getter,
+		loader: &singleflight.Group{},
 		mainCache: cache{
 			maxBytes: maxBytes,
 		},
@@ -54,11 +57,20 @@ func (g *Group) Get(key string) (ByteView, error) {
 		return v, nil
 	}
 
-	return g.load(key)
+	view, err := g.loader.Do(key, func() (interface{}, error) {
+		log.Printf("[SimpleCache load for database]")
+		return g.getLocally(key)
+	})
+
+	if err != nil {
+		return ByteView{}, err
+	}
+
+	return view.(ByteView), nil
 }
 
 
-func (g *Group) load(key string) (ByteView, error) {
+func (g *Group) getLocally(key string) (ByteView, error) {
 	bytes, err := g.getter(key)
 	if err != nil {
 		return ByteView{}, err
